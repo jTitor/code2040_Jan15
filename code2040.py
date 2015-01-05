@@ -1,6 +1,8 @@
 #Runs challenges for 2015 CODE2040.
 #Requires Python 3.
 import http.client
+import urllib
+import urllib.request
 import json
 import datetime
 
@@ -10,20 +12,19 @@ import datetime
 #	* address: A URL to HTTP POST the token to.
 #Returns:	The address' response as a string.
 def post(content, address):
-	conn = http.client.HTTPConnection(address)
+	req = urllib.request.Request(address)
 	# Specify that the data is JSON,
 	# and that we want a plaintext response.
-	header = {	"Content-type": "application/json",
-				"Accept":"text/plain"	}
-	conn.request("POST", "", content, header)
+	req.add_header("Content-type", "application/json")
+	req.add_header("Accept", "text/plain")
 	#Now get the response. We can do error checking here,
 	#since we should expect a 200 OK response by checking
 	#response.status.
-	response = conn.getresponse()
+	response = urllib.request.urlopen(req, content.encode("utf-8"))
 	if response.status != 200:
 		print("POST to " + address + " failed with code " + response.status + ": " + response.reason)
 	#In any case, return the response content.
-	return response.read()
+	return response.read().decode("utf-8")
 
 #Registers program with 2040 API.
 #Parameters:
@@ -36,8 +37,8 @@ def register(email, github):
 	#POST: { "email":"<email here>", "github":"<github repo url>" }
 	content = json.dumps({"email":email, "github":github})
 	token = post(content, "http://challenge.code2040.org/api/register")
-	#Check response, and return the response token.
-	return token
+	#Check response - it will be JSON, where "result" contains the actual token.
+	return json.loads(token)["result"]
 
 #Posts a token to the given address, and reports the address' response.
 #Parameters:
@@ -48,23 +49,30 @@ def register(email, github):
 def postToken(token, address):
 	#connect to address
 	#POST: { "token":"<token>" }
-	tokenStr = "{ \"token\":\"" + token + "\"}"
+	tokenStr = json.dumps({"token":token})
 	#return response
 	return post(tokenStr, address)
 	
+def trySend(content, addr):
+	try:
+		post(content, addr)
+	except urllib.error.HTTPError:
+		print("POST for challenge failed with content " + content + " and address " + addr + "!")
+		
 #Performs the first challenge - reversing a string.
 #Parameters:
 #	* token: The identifier returned from register().
 def revStr(token):
 	#post token to http://challenge.code2040.org/api/getstring
-	str = postToken(token, "http://challenge.code2040.org/api/getstring")
+	str = json.loads(postToken(token, "http://challenge.code2040.org/api/getstring"))["result"]
 	#Response is the string.
+	print("Challenge 1: String is: " + str)
 	#Reverse the string like this is 201!
 	revStr = str[::-1]
 	#connect to http://challenge.code2040.org/api/validatestring
 	#POST: { "token":"<token>", "string":"<reversed string>" }
 	content = json.dumps({"token":token, "string":revStr})
-	post(content, "http://challenge.code2040.org/api/validatestring")
+	trySend(content, "http://challenge.code2040.org/api/validatestring")
 	
 
 #Performs the second challenge - finding an arbitrary string
@@ -77,7 +85,8 @@ def findStr(token):
 	#Response is JSON:
 	# { "needle":(string), "haystack":(array of strings) }
 	#Parse it out.
-	parsed = json.loads(data)
+	parsed = json.loads(data)["result"]
+	print(parsed)
 	needle = parsed["needle"]
 	haystack = parsed["haystack"]
 	#Find the 0-indexed index in haystack that matches needle.
@@ -85,7 +94,7 @@ def findStr(token):
 	#connect to http://challenge.code2040.org/api/validateneedle
 	#POST: { "token":"<token>", "needle":"<index of needle string>" }
 	content = json.dumps({"token":token, "needle":idx})
-	post(content, "http://challenge.code2040.org/api/validateneedle")
+	trySend(content, "http://challenge.code2040.org/api/validateneedle")
 
 #Performs the third challenge - filtering a dictionary
 #by an arbitrary prefix.
@@ -96,7 +105,7 @@ def filterPrefix(token):
 	data = postToken(token, "http://challenge.code2040.org/api/prefix")
 	#Response is JSON:
 	# { "prefix":(string), "array":(array of strings) }
-	parsed = json.loads(data)
+	parsed = json.loads(data)["result"]
 	prefix = parsed["prefix"]
 	array = parsed["array"]
 	results = []
@@ -107,9 +116,9 @@ def filterPrefix(token):
 	#connect to http://challenge.code2040.org/api/validateprefix
 	#POST: { "token":"<token>", "array":"<filtered array>" }
 	content = json.dumps({"token":token, "array":results})
-	post(content, "http://challenge.code2040.org/api/validateprefix")
+	trySend(content, "http://challenge.code2040.org/api/validateprefix")
 
-def alterTimestamp(datestamp, interval)
+def alterTimestamp(datestamp, interval):
 	#See if there's a T to indicate time.
 	#If not, we can't modify by seconds, return the datestamp.
 	if not "T" in datestamp:
@@ -123,7 +132,7 @@ def alterTimestamp(datestamp, interval)
 	fmt = ""
 	if "Z" in datestamp:
 		fmt = "%Y-%m-%dT%M:%S:%fZ"
-	else if "+" in datestamp or "-" in datestamp:
+	elif "+" in datestamp or "-" in datestamp:
 		#This part will almost certainly have an exception in Python 2,
 		#but I don't think we're supposed to use external libraries.
 		fmt = "%Y-%m-%dT%M:%S:%f%z"
@@ -132,8 +141,6 @@ def alterTimestamp(datestamp, interval)
 	dt + datetime.timedelta(seconds=interval)
 	#And return the new time in the format we received.
 	return dt.strftime(fmt)
-	
-	
 	
 #Performs the fourth challenge - parsing and modifying 
 #an ISO 8601 timestamp.
@@ -144,7 +151,7 @@ def timestamp(token):
 	data = postToken(token, "http://challenge.code2040.org/api/time")
 	#Response is JSON:
 	# { "datestamp":(ISO 8601 datestamp, unknown subtype), "interval":(integer, seconds) }
-	parsed = json.loads(data)
+	parsed = json.loads(data)["result"]
 	datestamp = parsed["datestamp"]
 	interval = int(parsed["interval"])
 	#Alter the datestamp such that it is ahead by interval seconds.
@@ -153,7 +160,7 @@ def timestamp(token):
 	#POST: { "token":"<token>", "datestamp":"<altered datestamp, ISO 8601>" }
 	#Note that the altered datestamp must have the exact same subtype as the incoming datestamp.
 	content = json.dumps({"token":token, "datestamp":result})
-	post(content, "http://challenge.code2040.org/api/validatetime")
+	trySend(content, "http://challenge.code2040.org/api/validatetime")
 
 #Gets grades for each API challenge.
 #Returns:	A string containing grade information for each API challenge.
@@ -175,9 +182,12 @@ def main():
 	token = register(email, github)
 	print("Token is: " + token)
 	#if it failed somehow, quit here.
+	print("Previous grades:")
+	#Now check with the grade system.
+	getGrades(token)
 	
 	#Run all challenges.
-	print("Running challenges..."
+	print("Running challenges...")
 	revStr(token)
 	findStr(token)
 	filterPrefix(token)
@@ -186,5 +196,5 @@ def main():
 	#Now check with the grade system.
 	getGrades(token)
 
-if __name__ == __main__:
+if __name__ == "__main__":
 	main()
